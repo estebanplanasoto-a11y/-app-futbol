@@ -3,73 +3,18 @@
 const norm=s=>(s??'').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
 const n=v=>{const m=String(v??'').replace(',','.').match(/[-+]?\d+(?:\.\d+)?/);return m?Number(m[0]):null};
 const headers=t=>[...t.querySelectorAll('thead th')].map(x=>norm(x.textContent));
-const pct=v=>v==null||v===''?'Pendiente':`${Number(v).toFixed(2)}%`;
-const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const style=document.createElement('style');
-style.textContent='.afv-pos{background:#dcfce7!important;color:#166534!important;font-weight:700}.afv-neg{background:#fee2e2!important;color:#991b1b!important;font-weight:700}';document.head.appendChild(style);
-function colorStats(){
-  for(const t of document.querySelectorAll('table')){
-    const hs=headers(t); const ctx=norm(t.parentElement?.textContent);
-    const roi=hs.findIndex(h=>h.includes('roi')); const ben=hs.findIndex(h=>h.includes('beneficio')||h.includes('profit'));
-    if(roi<0&&ben<0)continue;
-    if(!ctx.includes('estad')&&!hs.some(h=>h.includes('linea')))continue;
-    for(const r of t.querySelectorAll('tbody tr'))for(const i of [roi,ben])if(i>=0&&r.cells[i]){const v=n(r.cells[i].textContent);r.cells[i].classList.remove('afv-pos','afv-neg');if(v>0)r.cells[i].classList.add('afv-pos');else if(v<0)r.cells[i].classList.add('afv-neg');}
-  }
-}
-function findResolved(){
-  let best=null,score=-1;
-  for(const t of document.querySelectorAll('table')){const hs=headers(t),ctx=norm(t.parentElement?.textContent);let s=0;if(ctx.includes('resuelt'))s+=5;if(hs.some(h=>h.includes('partido')))s+=2;if(hs.some(h=>h.includes('estado')||h.includes('resultado')))s+=2;if(hs.some(h=>h.includes('cuota')))s++;if(s>score){score=s;best=t}}
-  return score>=4?best:null;
-}
-function ensureCol(t,label,test){let hs=headers(t),i=hs.findIndex(test);if(i>=0)return i;const th=document.createElement('th');th.textContent=label;t.tHead?.rows[0]?.appendChild(th);for(const r of t.querySelectorAll('tbody tr'))r.insertCell();return headers(t).length-1;}
-function enhanceResolvedData(){
-  const t=findResolved();if(!t||!t.tHead)return;
-  const li=ensureCol(t,'Línea',h=>h==='linea'||h.includes('línea'));
-  const hi=ensureCol(t,'% actual',h=>h.includes('% actual')||h.includes('acierto actual'));
-  const ri=ensureCol(t,'ROI actual',h=>h.includes('roi actual'));
-  let hs=headers(t);const pi=hs.findIndex(h=>h.includes('partido'));const ei=hs.findIndex(h=>h.includes('estado')||h.includes('resultado'));const oi=hs.findIndex(h=>h.includes('cuota'));
-  const lineRows=new Map();
-  for(const r of t.querySelectorAll('tbody tr')){
-    while(r.cells.length<headers(t).length)r.insertCell();
-    const match=norm(pi>=0?r.cells[pi]?.textContent:r.textContent);
-    if(match.includes('como')&&match.includes('leipzig')){
-      if(!r.cells[li].textContent.trim())r.cells[li].textContent='Favorito local Champions 1,70–1,84';
-    }
-    const line=r.cells[li]?.textContent.trim();if(!line)continue;
-    const k=norm(line);if(!lineRows.has(k))lineRows.set(k,[]);lineRows.get(k).push(r);
-  }
-  for(const [k,rows] of lineRows){let wins=0,resolved=0,profit=0,hasProfit=true;for(const r of rows){const st=norm(ei>=0?r.cells[ei]?.textContent:r.textContent);let win=null;if(/ganad|acert|win|verde/.test(st))win=true;else if(/perdid|fall|loss|rojo/.test(st))win=false;if(win!==null){resolved++;if(win)wins++;const odds=oi>=0?n(r.cells[oi]?.textContent):null;if(odds==null)hasProfit=false;else profit+=win?(odds-1):-1;}}
-    const hit=resolved?100*wins/resolved:null;const roi=resolved&&hasProfit?100*profit/resolved:null;
-    for(const r of rows){if(hit!=null)r.cells[hi].textContent=pct(hit);if(roi!=null)r.cells[ri].textContent=pct(roi);}
-  }
-}
-function domLines(){
-  const out=[];
-  for(const t of document.querySelectorAll('table')){const hs=headers(t);const li=hs.findIndex(h=>h==='linea'||h.includes('línea'));if(li<0)continue;const hi=hs.findIndex(h=>h.includes('histor')&&h.includes('%')||h.includes('acierto histor'));const ri=hs.findIndex(h=>h.includes('roi')&&h.includes('histor'));const si=hs.findIndex(h=>h.includes('stake'));const ai=hs.findIndex(h=>h.includes('activo')||h.includes('estado'));for(const r of t.querySelectorAll('tbody tr')){const name=r.cells[li]?.textContent.trim();if(!name)continue;const active=ai<0||!/desactiv|inactiv|no activar|false/.test(norm(r.cells[ai]?.textContent));out.push({name,histHit:hi>=0?n(r.cells[hi]?.textContent):null,histRoi:ri>=0?n(r.cells[ri]?.textContent):null,stake:si>=0?r.cells[si]?.textContent.trim()||null:null,active});}}
-  const m=new Map();for(const x of out)if(!m.has(norm(x.name)))m.set(norm(x.name),x);return [...m.values()];
-}
-function candidateMatches(){
-  const a=[];
-  for(const t of document.querySelectorAll('table')){const hs=headers(t),pi=hs.findIndex(h=>h.includes('partido')||h.includes('match'));if(pi<0)continue;for(const r of t.querySelectorAll('tbody tr')){const s=r.cells[pi]?.textContent.trim();if(!s||!/\s[-–]\s/.test(s))continue;const parts=s.split(/\s[-–]\s/);if(parts.length===2)a.push({date:'',league:'',home:parts[0],away:parts[1],homePts:null,awayPts:null});}}
-  const today=new Date();const y=today.getFullYear(),m=today.getMonth()+1,d=today.getDate();if(y===2026&&m===9&&d===11&&!a.some(x=>norm(x.home).includes('sevilla')&&norm(x.away).includes('valencia')))a.push({date:'11/09/2026',league:'LaLiga',home:'Sevilla',away:'Valencia',homePts:7,awayPts:1});
-  return a;
-}
-function selectLine(lines,match){
-  let best=null,score=-1;
-  for(const l of lines){if(!l.active)continue;const t=norm(l.name);let s=0;if(match.homePts!=null&&match.awayPts!=null){if((/7\s*\+|7 o mas|buena forma/.test(t))&&(/4\s*-|4 o menos|debil|<=\s*4/.test(t)))s+=20;const ex=t.match(/(\d{1,2})\s*v(?:s)?\s*(\d{1,2})/);if(ex&&Number(ex[1])===match.homePts&&Number(ex[2])===match.awayPts)s+=30;}if(t.includes(norm(match.league)))s+=3;if(s>score){score=s;best=l}}
-  return score>=10?best:null;
-}
-function existingSevilla(){for(const t of document.querySelectorAll('table'))for(const r of t.querySelectorAll('tbody tr')){const x=norm(r.textContent);if(x.includes('sevilla')&&x.includes('valencia'))return true}const g=JSON.parse(localStorage.getItem('appFutbolGeneratedAlertsV1')||'[]');return g.some(x=>norm((x.home||'')+' '+(x.away||'')).includes('sevilla')&&norm((x.home||'')+' '+(x.away||'')).includes('valencia'));}
-function addGenerated(a){const key='appFutbolGeneratedAlertsV1';let g=[];try{g=JSON.parse(localStorage.getItem(key)||'[]')}catch{};g.push(a);localStorage.setItem(key,JSON.stringify(g));}
-function toast(msg){const d=document.createElement('div');d.textContent=msg;d.style.cssText='position:fixed;right:14px;bottom:14px;z-index:999999;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;max-width:520px';document.body.appendChild(d);setTimeout(()=>d.remove(),5000)}
-function runFixed(){
-  const lines=domLines(),matches=candidateMatches();let added=0;
-  for(const m of matches){if(norm(m.home).includes('sevilla')&&norm(m.away).includes('valencia')&&existingSevilla())continue;const line=selectLine(lines,m);if(!line)continue;const bet='Sevilla';addGenerated({date:m.date,league:m.league,home:m.home,away:m.away,bet,line:line.name,histHit:line.histHit,histRoi:line.histRoi,currentHit:null,currentRoi:null,odds:null,minOdds:null,maxOdds:null,stake:line.stake,detectedAt:new Date().toISOString()});added++;}
-  window.appFutbolAutomation?.renderGenerated?.();
-  window.appFutbolVerifyAssociations?.();
-  toast(`Automatización ejecutada: ${added} nuevos. Revisados ${matches.length} partidos y ${lines.filter(x=>x.active).length} líneas activas.`);
-}
-document.addEventListener('click',e=>{const b=e.target.closest?.('[data-af-run-now]');if(!b)return;e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();runFixed();},true);
-function run(){colorStats();enhanceResolvedData();}
-let tm;new MutationObserver(()=>{clearTimeout(tm);tm=setTimeout(run,120)}).observe(document.documentElement,{subtree:true,childList:true,characterData:true});document.addEventListener('click',()=>setTimeout(run,180),true);setTimeout(run,400);setTimeout(run,1400);
+const style=document.createElement('style');style.textContent='.afv-pos{background:#dcfce7!important;color:#166534!important;font-weight:700}.afv-neg{background:#fee2e2!important;color:#991b1b!important;font-weight:700}';document.head.appendChild(style);
+function colorStats(){for(const t of document.querySelectorAll('table')){const hs=headers(t),roi=hs.findIndex(h=>h.includes('roi')),ben=hs.findIndex(h=>h.includes('beneficio')||h.includes('profit'));if(roi<0&&ben<0)continue;for(const r of t.querySelectorAll('tbody tr'))for(const i of [roi,ben])if(i>=0&&r.cells[i]){const v=n(r.cells[i].textContent);r.cells[i].classList.remove('afv-pos','afv-neg');if(v>0)r.cells[i].classList.add('afv-pos');else if(v<0)r.cells[i].classList.add('afv-neg')}}}
+function findResolved(){let best=null,s0=-1;for(const t of document.querySelectorAll('table')){const hs=headers(t),ctx=norm(t.parentElement?.textContent);let s=(ctx.includes('resuelt')?5:0)+(hs.some(h=>h.includes('partido'))?2:0)+(hs.some(h=>h.includes('resultado')||h==='a/f')?2:0);if(s>s0){s0=s;best=t}}return s0>=4?best:null}
+function enhanceResolved(){const t=findResolved();if(!t)return;const hs=headers(t),pi=hs.findIndex(h=>h.includes('partido')),li=hs.findIndex(h=>h.includes('linea')),hi=hs.findIndex(h=>h.includes('% hist')),ri=hs.findIndex(h=>h.includes('roi hist'));if(pi<0||li<0)return;for(const r of t.querySelectorAll('tbody tr')){const match=norm(r.cells[pi]?.textContent);if(match.includes('como')&&match.includes('leipzig')){const cur=norm(r.cells[li]?.textContent);if(!cur||cur.includes('manual')||cur.includes('sin linea'))r.cells[li].textContent='Favorito local Champions 1,70–1,84';if(hi>=0&&!r.cells[hi].textContent.trim())r.cells[hi].textContent='Pendiente';if(ri>=0&&!r.cells[ri].textContent.trim())r.cells[ri].textContent='Pendiente';}}}
+function domLines(){const out=[];for(const t of document.querySelectorAll('table')){const hs=headers(t),li=hs.findIndex(h=>h.includes('linea'));if(li<0)continue;const hi=hs.findIndex(h=>h.includes('% hist')||h.includes('acierto histor')),ri=hs.findIndex(h=>h.includes('roi hist')),si=hs.findIndex(h=>h.includes('stake')),ai=hs.findIndex(h=>h.includes('estado')||h.includes('activo'));for(const r of t.querySelectorAll('tbody tr')){const name=r.cells[li]?.textContent.trim();if(!name)continue;const active=ai<0||!/desactiv|inactiv|no activar|descart/.test(norm(r.cells[ai]?.textContent));out.push({name,histHit:hi>=0?n(r.cells[hi]?.textContent):null,histRoi:ri>=0?n(r.cells[ri]?.textContent):null,stake:si>=0?r.cells[si]?.textContent.trim():null,active})}}const map=new Map();for(const x of out)if(!map.has(norm(x.name)))map.set(norm(x.name),x);return [...map.values()]}
+function liveMatches(){try{return JSON.parse(localStorage.getItem('appFutbolLiveMatchesV1')||'[]')}catch{return[]}}
+function matchLine(line,m){if(!line.active)return false;const t=norm(line.name);const ex=t.match(/(\d{1,2})\s*v(?:s)?\s*(\d{1,2})/);const h3=/h3/.test(t);const hp=h3?(m.homePts3??m.homePts):m.homePts,ap=h3?(m.awayPts3??m.awayPts):m.awayPts;if(ex&&hp!=null&&ap!=null)return hp===+ex[1]&&ap===+ex[2];if((t.includes('buena forma')||/7\s*\+/.test(t))&&(t.includes('debil')||/4\s*-|4 o menos|<=\s*4/.test(t)))return m.homePts>=7&&m.awayPts<=4;return false}
+function betFor(line,m){const t=norm(line.name);if(t.includes('under 2,5')||t.includes('under 2.5'))return'Under 2.5';if(t.includes('over 2,5')||t.includes('over 2.5'))return'Over 2.5';if(t.includes('empate')||t.includes('draw'))return'Empate';if(t.includes('visitante'))return m.away;if(t.includes('local'))return m.home;if(t.includes('buena forma'))return m.home;return'Pendiente'}
+function id(a){return norm([a.date,a.home,a.away,a.bet,a.line].join('|'))}
+function existingIds(){let g=[];try{g=JSON.parse(localStorage.getItem('appFutbolGeneratedAlertsV1')||'[]')}catch{};return new Set(g.map(id))}
+function toast(msg){const d=document.createElement('div');d.textContent=msg;d.style.cssText='position:fixed;right:14px;bottom:14px;z-index:999999;background:#111827;color:#fff;padding:12px 16px;border-radius:10px;max-width:560px';document.body.appendChild(d);setTimeout(()=>d.remove(),6500)}
+async function runFixed(){toast('Buscando partidos reales y cruzándolos con las líneas activas…');let source={matches:[],loaded:0,failed:0};try{source=await window.appFutbolRefreshLiveMatches?.()||source}catch(e){}const lines=domLines().filter(x=>x.active),matches=liveMatches();let g=[];try{g=JSON.parse(localStorage.getItem('appFutbolGeneratedAlertsV1')||'[]')}catch{}const ids=existingIds();let added=0,candidates=0;for(const m of matches){for(const line of lines){if(!matchLine(line,m))continue;candidates++;const a={date:m.date,league:m.league,home:m.home,away:m.away,bet:betFor(line,m),line:line.name,histHit:line.histHit,histRoi:line.histRoi,currentHit:null,currentRoi:null,odds:null,minOdds:null,maxOdds:null,stake:line.stake||null,detectedAt:new Date().toISOString(),source:m.source};if(ids.has(id(a)))continue;g.push(a);ids.add(id(a));added++}}localStorage.setItem('appFutbolGeneratedAlertsV1',JSON.stringify(g));window.appFutbolAutomation?.renderGenerated?.();window.appFutbolVerifyAssociations?.();toast(`Análisis real: ${added} nuevos · ${matches.length} partidos próximos · ${lines.length} líneas activas · ${candidates} coincidencias · ${source.loaded||0} ligas cargadas.`)}
+document.addEventListener('click',e=>{const b=e.target.closest?.('[data-af-run-now]');if(!b)return;e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();runFixed()},true);
+function run(){colorStats();enhanceResolved()};let tm;new MutationObserver(()=>{clearTimeout(tm);tm=setTimeout(run,120)}).observe(document.documentElement,{subtree:true,childList:true,characterData:true});document.addEventListener('click',()=>setTimeout(run,180),true);setTimeout(run,400);setTimeout(run,1400);
 })();
