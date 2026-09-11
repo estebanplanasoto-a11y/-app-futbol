@@ -1,0 +1,34 @@
+name: Unpack app source
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  unpack:
+    if: github.event.head_commit.message != 'chore: unpack app source'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract embedded app
+        run: |
+          python - <<'PY'
+          import re, base64, gzip, pathlib
+          p = pathlib.Path('index.html')
+          s = p.read_text(encoding='utf-8')
+          m = re.search(r'const b="([A-Za-z0-9+/=]+)"', s)
+          if not m:
+              raise SystemExit('Embedded payload not found')
+          html = gzip.decompress(base64.b64decode(m.group(1))).decode('utf-8')
+          pathlib.Path('source.html').write_text(html, encoding='utf-8')
+          PY
+      - name: Commit unpacked source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add source.html
+          git diff --cached --quiet || git commit -m "chore: unpack app source"
+          git push
