@@ -4,12 +4,25 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#0d1b2a">
-<title>APP FÚTBOL V2</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="APP FÚTBOL">
+<title>APP FÚTBOL</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.svg">
+<link rel="icon" href="icon-fallback.svg" type="image/svg+xml">
 <link rel="stylesheet" href="styles-v2.css?v=1">
 </head>
 <body>
 <div id="app"></div>
 <div id="toast" class="toast" hidden></div>
 <script src="app-v2.js?v=1"></script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  });
+}
+</script>
 </body>
 </html>
