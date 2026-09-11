@@ -1,0 +1,15 @@
+{
+  "name": "APP FÚTBOL",
+  "short_name": "APP FÚTBOL",
+  "description": "Análisis de pronósticos de fútbol según la tabla maestra",
+  "start_url": "/-app-futbol/",
+  "scope": "/-app-futbol/",
+  "display": "standalone",
+  "background_color": "#0d1b2a",
+  "theme_color": "#0d1b2a",
+  "orientation": "portrait-primary",
+  "icons": [
+    {"src":"icon-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},
+    {"src":"icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}
+  ]
+}
