@@ -1,162 +1,32 @@
 (()=>{
 'use strict';
-const STORE='appFutbolAutomationEngineV1';
-const GENERATED='appFutbolGeneratedAlertsV1';
+const GENERATED='appFutbolGeneratedAlertsV2';
+const LIVE='appFutbolLiveMatchesV1';
 const norm=s=>(s??'').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim();
-const keyNorm=s=>norm(s).replace(/[^a-z0-9]/g,'');
-const toNum=v=>{if(v==null)return null;const m=String(v).replace(',','.').match(/[-+]?\d+(?:\.\d+)?/);return m?Number(m[0]):null};
-const pick=(o,names)=>{if(!o||typeof o!=='object')return undefined;for(const [k,v] of Object.entries(o)){const nk=keyNorm(k);if(names.some(n=>nk===n||nk.includes(n)))return v}return undefined};
-const asName=v=>{if(v==null)return'';if(typeof v==='string'||typeof v==='number')return String(v).trim();if(typeof v==='object')return String(pick(v,['name','nombre','teamname','equipo','club'])??'').trim();return''};
+const n=v=>{const m=String(v??'').replace(',','.').match(/[-+]?\d+(?:\.\d+)?/);return m?Number(m[0]):null};
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const now=()=>new Date().toISOString();
-const load=(k,fallback)=>{try{return JSON.parse(localStorage.getItem(k)||JSON.stringify(fallback))}catch{return fallback}};
-const save=(k,v)=>localStorage.setItem(k,JSON.stringify(v));
-const state=load(STORE,{runs:0,lastRun:null,lastSummary:null});
-let generated=load(GENERATED,[]);
-function walk(v,out,seen=new WeakSet(),depth=0,source='storage'){
-  if(depth>9||v==null)return;
-  if(typeof v==='object'){
-    if(seen.has(v))return;seen.add(v);
-    out.push({value:v,source});
-    if(Array.isArray(v)){for(const x of v)walk(x,out,seen,depth+1,source)}
-    else for(const x of Object.values(v))walk(x,out,seen,depth+1,source);
-  }
-}
-function collectObjects(){
-  const out=[];
-  for(const st of [localStorage,sessionStorage]){
-    for(let i=0;i<st.length;i++){
-      const k=st.key(i);if(!k||k===STORE||k===GENERATED)continue;
-      try{walk(JSON.parse(st.getItem(k)),out,new WeakSet(),0,k)}catch{}
-    }
-  }
-  for(const k of Object.getOwnPropertyNames(window)){
-    if(!/(match|partid|fixture|game|line|strategy|study|pronost|pick|alert|aviso|automat)/i.test(k))continue;
-    try{const v=window[k];if(v&&typeof v==='object')walk(v,out,new WeakSet(),0,'window.'+k)}catch{}
-  }
-  return out;
-}
-function isDisabled(o){
-  const v=pick(o,['active','activo','enabled','habilitado','status','estado']);
-  if(v===false||v===0)return true;
-  const t=norm(v);
-  return ['false','inactive','inactivo','disabled','desactivado','no activar','descartada','descartado'].some(x=>t.includes(x));
-}
-function lineFrom(o){
-  const name=asName(pick(o,['linea','linename','nombrelinea','line','studyline','estudio','strategy','estrategia','study']));
-  if(!name||name.length>220)return null;
-  const hit=pick(o,['historicalhitrate','historicalhit','hithistorico','aciertohistorico','porcentajehistorico','percenthistorico','histacierto','hitratehist','pcthistorico','acierto']);
-  const roi=pick(o,['historicalroi','roihistorico','histroi','roihist','roi']);
-  const market=asName(pick(o,['apuesta','mercado','market','bet','pick']));
-  const league=asName(pick(o,['liga','competicion','competition','league']));
-  const minOdds=toNum(pick(o,['minodds','cuotamin','cuotaminima','oddsmin','minimumodds']));
-  const maxOdds=toNum(pick(o,['maxodds','cuotamax','cuotamaxima','oddsmax','maximumodds']));
-  const stake=pick(o,['stake','unidades','units']);
-  return {name,histHit:hit,histRoi:roi,market,league,minOdds,maxOdds,stake,active:!isDisabled(o),raw:o};
-}
-function team(o,side){
-  const names=side==='home'?['home','hometeam','local','equipolocal','teamhome','host']:['away','awayteam','visitante','equipovisitante','teamaway','visitor'];
-  return asName(pick(o,names));
-}
-function matchFrom(o,source){
-  const home=team(o,'home'),away=team(o,'away');
-  if(!home||!away||home===away)return null;
-  const date=pick(o,['date','fecha','datetime','kickoff','starttime','matchdate']);
-  const league=asName(pick(o,['liga','competicion','competition','league','tournament']));
-  const market=asName(pick(o,['apuesta','mercado','market','bet','pick','selection']));
-  const line=asName(pick(o,['linea','linename','nombrelinea','line','studyline','estudio','strategy','estrategia']));
-  const odds=toNum(pick(o,['cuota','odds','price']));
-  const homePts=toNum(pick(o,['homepoints','localpoints','puntoslocal','homeformpoints','formhomepoints','homepts','ptslocal','puntoslocalultimos5']));
-  const awayPts=toNum(pick(o,['awaypoints','visitorpoints','visitantepoints','puntosvisitante','awayformpoints','formawaypoints','awaypts','ptsvisitante','puntosvisitanteultimos5']));
-  const currentHit=pick(o,['currenthitrate','currenthit','aciertoactual','porcentajeactual','pctactual']);
-  const currentRoi=pick(o,['currentroi','roiactual']);
-  return {home,away,date,league,market,line,odds,homePts,awayPts,currentHit,currentRoi,raw:o,source};
-}
-function marketFromLine(name){const t=norm(name);if(t.includes('under 2.5')||t.includes('under2.5'))return'Under 2.5';if(t.includes('over 2.5')||t.includes('over2.5'))return'Over 2.5';if(t.includes('empate')||/\bdraw\b/.test(t))return'Empate';if(t.includes('visitante')||/\bvisitor\b/.test(t)||/\baway\b/.test(t))return'Visitante';if(t.includes('local')||/\bhome\b/.test(t))return'Local';return''}
-function lineMatchesMatch(line,m){
-  if(!line.active)return false;
-  const lt=norm(line.name+' '+line.league+' '+JSON.stringify(line.raw||{}));
-  if(line.league&&m.league&&!norm(m.league).includes(norm(line.league))&&!norm(line.league).includes(norm(m.league)))return false;
-  if(line.minOdds!=null&&m.odds!=null&&m.odds<line.minOdds)return false;
-  if(line.maxOdds!=null&&m.odds!=null&&m.odds>line.maxOdds)return false;
-  const exact=lt.match(/(?:^|\D)(\d{1,2})\s*v(?:s)?\s*(\d{1,2})(?:\D|$)/);
-  if(exact&&m.homePts!=null&&m.awayPts!=null){if(m.homePts!==Number(exact[1])||m.awayPts!==Number(exact[2]))return false;return true}
-  if(m.homePts!=null&&m.awayPts!=null){
-    if((/7\s*\+|>=\s*7|7 o mas|buena forma/.test(lt))&&(/<=\s*4|4\s*-|4 o menos|debil/.test(lt)))return m.homePts>=7&&m.awayPts<=4;
-    if((/visitante.*7\s*\+/.test(lt)||/away.*7\s*\+/.test(lt))&&(/local.*<=\s*4/.test(lt)||/home.*<=\s*4/.test(lt)))return m.awayPts>=7&&m.homePts<=4;
-  }
-  if(m.line&&norm(m.line)===norm(line.name))return true;
-  const mt=norm(JSON.stringify(m.raw||{}));
-  const tokens=norm(line.name).split(/[^a-z0-9]+/).filter(x=>x.length>=5);
-  const shared=tokens.filter(x=>mt.includes(x)).length;
-  return shared>=2;
-}
-function idFor(a){return norm([a.date,a.league,a.home,a.away,a.bet,a.line].join('|'))}
-function existingAlertIds(){
-  const ids=new Set(generated.map(idFor));
-  for(const t of document.querySelectorAll('table')){
-    const parent=norm(t.parentElement?.textContent);if(!/(aviso|pronost|pick)/.test(parent))continue;
-    for(const r of t.querySelectorAll('tbody tr'))ids.add(norm(r.textContent));
-  }
-  return ids;
-}
-function deriveAlerts(){
-  const objs=collectObjects();
-  const lines=[];const matches=[];
-  for(const e of objs){const l=lineFrom(e.value);if(l)lines.push(l);const m=matchFrom(e.value,e.source);if(m)matches.push(m)}
-  const uniqueLines=[];const lineSeen=new Set();
-  for(const l of lines){const k=norm(l.name);if(!k||lineSeen.has(k))continue;lineSeen.add(k);uniqueLines.push(l)}
-  const out=[];const seen=new Set();
-  for(const m of matches){
-    const applicable=[];
-    if(m.line){const exact=uniqueLines.find(l=>norm(l.name)===norm(m.line)&&l.active);if(exact)applicable.push(exact)}
-    for(const l of uniqueLines){if(applicable.includes(l))continue;if(lineMatchesMatch(l,m))applicable.push(l)}
-    if(!applicable.length&&!(m.market&&m.line))continue;
-    if(!applicable.length){applicable.push({name:m.line,histHit:null,histRoi:null,market:m.market,stake:null,active:true})}
-    for(const l of applicable){
-      const bet=m.market||l.market||marketFromLine(l.name)||'Pendiente de definir';
-      const a={date:m.date||'',league:m.league||l.league||'',home:m.home,away:m.away,bet,line:l.name,histHit:l.histHit??null,histRoi:l.histRoi??null,currentHit:m.currentHit??null,currentRoi:m.currentRoi??null,odds:m.odds??null,minOdds:l.minOdds??null,maxOdds:l.maxOdds??null,stake:l.stake??null,source:m.source,detectedAt:now()};
-      const id=idFor(a);if(!id||seen.has(id))continue;seen.add(id);out.push(a);
-    }
-  }
-  return {alerts:out,lines:uniqueLines.length,matches:matches.length};
-}
-function isExisting(a){
-  const target=norm([a.home,a.away,a.bet,a.line].join(' '));
-  for(const t of document.querySelectorAll('table')){
-    const parent=norm(t.parentElement?.textContent);if(!/(aviso|pronost|pick)/.test(parent))continue;
-    for(const r of t.querySelectorAll('tbody tr')){const rt=norm(r.textContent);if(rt.includes(norm(a.home))&&rt.includes(norm(a.away))&&(rt.includes(norm(a.bet))||rt.includes(norm(a.line))))return true}
-  }
-  return generated.some(x=>idFor(x)===idFor(a));
-}
-function avisosHost(){
-  const candidates=[...document.querySelectorAll('h1,h2,h3,[role="tab"],button,a')].filter(e=>norm(e.textContent).includes('aviso'));
-  for(const c of candidates){let p=c;for(let i=0;i<6&&p;i++,p=p.parentElement){if(p.querySelector?.('table')||norm(p.textContent).includes('avisos'))return p}}
-  return document.body;
-}
-function fmtPct(v){if(v==null||v==='')return'Pendiente';const n=toNum(v);return n==null?esc(v):`${n.toFixed(2)}%`}
-function renderGenerated(){
-  let box=document.querySelector('[data-af-auto-alerts]');
-  if(!generated.length){box?.remove();return}
-  const host=avisosHost();if(!host)return;
-  if(!box){box=document.createElement('section');box.dataset.afAutoAlerts='1';box.style.cssText='margin:16px 0;padding:14px;border:1px solid #d1d5db;border-radius:14px;background:#fff;overflow:auto';host.appendChild(box)}
-  box.innerHTML=`<h3 style="margin:0 0 10px">Avisos automáticos</h3><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr><th>Fecha</th><th>Competición</th><th>Partido</th><th>Apuesta</th><th>Línea</th><th>% histórico</th><th>ROI histórico</th><th>% actual</th><th>ROI actual</th><th>Cuota</th><th>Rango cuota</th><th>Stake</th><th></th></tr></thead><tbody>${generated.map((a,i)=>`<tr><td>${esc(a.date)}</td><td>${esc(a.league)}</td><td>${esc(a.home)} - ${esc(a.away)}</td><td>${esc(a.bet)}</td><td>${esc(a.line)}</td><td>${fmtPct(a.histHit)}</td><td>${fmtPct(a.histRoi)}</td><td>${fmtPct(a.currentHit)}</td><td>${fmtPct(a.currentRoi)}</td><td>${a.odds??'Pendiente'}</td><td>${a.minOdds!=null||a.maxOdds!=null?`${a.minOdds??''}${a.minOdds!=null&&a.maxOdds!=null?'–':''}${a.maxOdds??''}`:'Pendiente'}</td><td>${esc(a.stake??'Pendiente')}</td><td><button data-af-auto-delete="${i}" style="border:0;border-radius:8px;padding:6px 8px;background:#b91c1c;color:#fff;font-weight:700">Eliminar</button></td></tr>`).join('')}</tbody></table>`;
-  box.querySelectorAll('[data-af-auto-delete]').forEach(b=>b.onclick=()=>{const i=Number(b.dataset.afAutoDelete);generated.splice(i,1);save(GENERATED,generated);renderGenerated()});
-}
-function toast(msg){let d=document.createElement('div');d.textContent=msg;d.style.cssText='position:fixed;right:14px;bottom:14px;z-index:999999;background:#111827;color:white;padding:12px 16px;border-radius:10px;box-shadow:0 8px 30px #0003;max-width:430px';document.body.appendChild(d);setTimeout(()=>d.remove(),4500)}
-async function run(){
-  const scan=deriveAlerts();let added=0;
-  for(const a of scan.alerts){if(isExisting(a))continue;generated.push(a);added++}
-  const dedup=new Map();for(const a of generated)dedup.set(idFor(a),a);generated=[...dedup.values()];save(GENERATED,generated);
-  state.runs=(state.runs||0)+1;state.lastRun=now();state.lastSummary={added,lines:scan.lines,matches:scan.matches,totalCandidates:scan.alerts.length};save(STORE,state);renderGenerated();
-  window.appFutbolVerifyAssociations?.();
-  if(added)toast(`Automatización ejecutada: ${added} pronóstico${added===1?'':'s'} añadido${added===1?'':'s'} a Avisos.`);
-  else toast(`Automatización ejecutada: 0 nuevos. Revisados ${scan.matches} registros de partido y ${scan.lines} líneas activas/detectadas.`);
-  return state.lastSummary;
-}
+const headers=t=>[...t.querySelectorAll('thead th')].map(x=>norm(x.textContent));
+const fmt=v=>v==null||v===''?'Pendiente':(Number.isFinite(n(v))?n(v).toFixed(2)+'%':String(v));
+let generated=[];try{generated=JSON.parse(localStorage.getItem(GENERATED)||'[]')}catch{}
+function save(){localStorage.setItem(GENERATED,JSON.stringify(generated))}
+function toast(msg){document.querySelectorAll('[data-af-engine-toast]').forEach(x=>x.remove());const d=document.createElement('div');d.dataset.afEngineToast='1';d.textContent=msg;d.style.cssText='position:fixed;right:14px;bottom:14px;z-index:999999;background:#111827;color:white;padding:12px 16px;border-radius:10px;box-shadow:0 8px 30px #0003;max-width:540px';document.body.appendChild(d);setTimeout(()=>d.remove(),6500)}
+function domLines(){const out=[];for(const t of document.querySelectorAll('table')){const hs=headers(t);const li=hs.findIndex(h=>h==='linea'||h==='línea'||h.includes('linea')||h.includes('línea'));if(li<0)continue;const hi=hs.findIndex(h=>h.includes('% hist')||h.includes('acierto hist'));const ri=hs.findIndex(h=>h.includes('roi hist')||(h==='roi'));const si=hs.findIndex(h=>h.includes('stake'));const ai=hs.findIndex(h=>h.includes('activo')||h.includes('estado'));const ci=hs.findIndex(h=>h.includes('cuota')||h.includes('rango'));const ligi=hs.findIndex(h=>h.includes('liga')||h.includes('compet'));for(const r of t.querySelectorAll('tbody tr')){const name=r.cells[li]?.textContent.trim();if(!name||/manual\s*\/\s*sin\s*linea/i.test(name))continue;const st=ai>=0?norm(r.cells[ai]?.textContent):'';if(/desactiv|inactiv|no activar|descart|false/.test(st))continue;let min=null,max=null;if(ci>=0){const nums=(r.cells[ci]?.textContent||'').replace(',','.').match(/\d+(?:\.\d+)?/g)||[];if(nums.length){min=+nums[0];max=nums.length>1?+nums[1]:null}}out.push({name,histHit:hi>=0?n(r.cells[hi]?.textContent):null,histRoi:ri>=0?n(r.cells[ri]?.textContent):null,stake:si>=0?r.cells[si]?.textContent.trim()||null:null,league:ligi>=0?r.cells[ligi]?.textContent.trim()||'':'',min,max});}}
+const map=new Map();for(const l of out){const k=norm(l.name);if(!map.has(k)||((map.get(k).histHit==null)&&(l.histHit!=null)))map.set(k,l)}return [...map.values()];}
+function storageLines(){const out=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);let v;try{v=JSON.parse(localStorage.getItem(k))}catch{continue}const walk=(x,d=0)=>{if(d>7||x==null)return;if(Array.isArray(x)){x.forEach(y=>walk(y,d+1));return}if(typeof x!=='object')return;const name=x.linea||x.line||x.nombreLinea||x.estudio||x.strategy; if(typeof name==='string'&&name.trim()&&!/manual\s*\/\s*sin\s*linea/i.test(name)){const active=!(/desactiv|inactiv|no activar|descart/.test(norm(x.estado||x.status||''))||x.active===false||x.enabled===false);if(active)out.push({name:name.trim(),histHit:n(x.historicalHitRate??x.aciertoHistorico??x.porcentajeHistorico),histRoi:n(x.historicalROI??x.roiHistorico),stake:x.stake??null,league:x.liga||x.competicion||'',min:n(x.minOdds??x.cuotaMinima),max:n(x.maxOdds??x.cuotaMaxima)});}Object.values(x).forEach(y=>walk(y,d+1));};walk(v)}return out}
+function allLines(){const m=new Map();for(const l of [...domLines(),...storageLines()]){const k=norm(l.name);if(!k)continue;const p=m.get(k);if(!p)m.set(k,l);else m.set(k,{...p,...l,histHit:l.histHit??p.histHit,histRoi:l.histRoi??p.histRoi,stake:l.stake??p.stake});}return [...m.values()]}
+function parseRule(line){const t=norm(line.name);let home5=null,away5=null,home3=null,away3=null;let m=t.match(/(?:^|\D)(\d{1,2})\s*v(?:s)?\s*(\d{1,2})(?:\D|$)/);if(m){if(/h3|3 casa|3 fuera|3 partidos/.test(t)){home3=+m[1];away3=+m[2]}else{home5=+m[1];away5=+m[2]}}
+let market='';if(/under\s*2[,.]5|u2[,.]5/.test(t))market='Under 2.5';else if(/over\s*2[,.]5|o2[,.]5/.test(t))market='Over 2.5';else if(/empate|\bdraw\b/.test(t))market='Empate';else if(/visitante|\baway\b|\bvisitor\b/.test(t))market='Visitante';else if(/\blocal\b|\bhome\b/.test(t))market='Local';
+const strongWeak=/buena forma|7\s*\+|>=\s*7|7 o mas/.test(t)&&/debil|4\s*-|<=\s*4|4 o menos/.test(t);return {home5,away5,home3,away3,market,strongWeak,text:t};}
+function leagueCompatible(line,match){if(!line.league)return true;const a=norm(line.league),b=norm(match.league);return !a||!b||a.includes(b)||b.includes(a)||a.includes('22 ligas')||a.includes('big five')}
+function matches(line,m){if(!leagueCompatible(line,m))return false;const r=parseRule(line);if(r.home5!=null&&(m.homePts!==r.home5||m.awayPts!==r.away5))return false;if(r.home3!=null&&(m.homePts3!==r.home3||m.awayPts3!==r.away3))return false;if(r.strongWeak&&!(m.homePts>=7&&m.awayPts<=4))return false;if(r.home5==null&&r.home3==null&&!r.strongWeak)return false;return true}
+function dedupId(a){return norm([a.date,a.home,a.away,a.bet,a.line].join('|'))}
+function existing(a){const id=dedupId(a);if(generated.some(x=>dedupId(x)===id))return true;for(const t of document.querySelectorAll('table'))for(const r of t.querySelectorAll('tbody tr')){const s=norm(r.textContent);if(s.includes(norm(a.home))&&s.includes(norm(a.away))&&s.includes(norm(a.line)))return true}return false}
+function host(){const h=[...document.querySelectorAll('h1,h2,h3')].find(x=>norm(x.textContent).includes('avisos pendientes'));return h?.parentElement||document.body}
+function render(){let box=document.querySelector('[data-af-real-alerts]');if(!generated.length){box?.remove();return}if(!box){box=document.createElement('section');box.dataset.afRealAlerts='1';box.style.cssText='margin:16px 18px;padding:14px;border:1px solid #d1d5db;border-radius:14px;background:#fff;overflow:auto';host().appendChild(box)}box.innerHTML='<h3 style="margin:0 0 10px">Avisos detectados automáticamente</h3><table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr><th>Fecha</th><th>Liga</th><th>Partido</th><th>Pronóstico</th><th>Línea</th><th>% hist.</th><th>ROI hist.</th><th>Stake</th><th></th></tr></thead><tbody>'+generated.map((a,i)=>`<tr><td>${esc(a.date)}</td><td>${esc(a.league)}</td><td>${esc(a.home)} - ${esc(a.away)}</td><td>${esc(a.bet)}</td><td>${esc(a.line)}</td><td>${fmt(a.histHit)}</td><td>${fmt(a.histRoi)}</td><td>${esc(a.stake??'Pendiente')}</td><td><button data-af-del-real="${i}" style="background:#b91c1c;color:#fff;border:0;border-radius:7px;padding:5px 8px">Eliminar</button></td></tr>`).join('')+'</tbody></table>';box.querySelectorAll('[data-af-del-real]').forEach(b=>b.onclick=()=>{generated.splice(+b.dataset.afDelReal,1);save();render()})}
+async function refreshLive(){if(typeof window.appFutbolRefreshLiveMatches!=='function')throw new Error('La fuente de partidos no está cargada');const s=await window.appFutbolRefreshLiveMatches();let arr=[];try{arr=JSON.parse(localStorage.getItem(LIVE)||'[]')}catch{}return {arr,status:s}}
+function syncComo(){for(const t of document.querySelectorAll('table')){const hs=headers(t);const pi=hs.findIndex(h=>h.includes('partido'));const li=hs.findIndex(h=>h==='linea(s)'||h==='linea'||h==='línea'||h.includes('linea'));if(pi<0||li<0)continue;for(const r of t.querySelectorAll('tbody tr')){const p=norm(r.cells[pi]?.textContent);if(p.includes('como')&&p.includes('leipzig')&&/manual|sin linea/.test(norm(r.cells[li]?.textContent)))r.cells[li].textContent='Favorito local Champions 1,70–1,84';}}
+for(const t of document.querySelectorAll('table')){const hs=headers(t);const li=hs.findIndex(h=>h==='linea'||h==='línea'||h.includes('linea'));if(li<0)continue;for(const r of t.querySelectorAll('tbody tr'))if(/manual\s*\/\s*sin\s*linea/.test(norm(r.cells[li]?.textContent))&&norm(r.textContent).includes('como')&&norm(r.textContent).includes('leipzig'))r.cells[li].textContent='Favorito local Champions 1,70–1,84';}}
+async function run(){const b=[...document.querySelectorAll('[data-af-run-now]')];b.forEach(x=>{x.disabled=true;x.textContent='Analizando…'});try{syncComo();const {arr,status}=await refreshLive();const lines=allLines();let candidates=0,added=0;for(const m of arr){for(const l of lines){if(!matches(l,m))continue;candidates++;const rule=parseRule(l);const a={date:m.date,league:m.league,home:m.home,away:m.away,bet:rule.market||'Revisar mercado',line:l.name,histHit:l.histHit,histRoi:l.histRoi,stake:l.stake,detectedAt:new Date().toISOString()};if(existing(a))continue;generated.push(a);added++;}}const mm=new Map();for(const a of generated)mm.set(dedupId(a),a);generated=[...mm.values()];save();render();syncComo();window.appFutbolVerifyAssociations?.();toast(`Análisis completado: ${added} nuevos · ${arr.length} partidos próximos · ${lines.length} líneas activas · ${candidates} coincidencias · ${status.loaded} ligas cargadas${status.failed?` · ${status.failed} con error`:''}.`);return {added,matches:arr.length,lines:lines.length,candidates,loaded:status.loaded,failed:status.failed}}catch(e){console.error(e);toast('ERROR DE AUTOMATIZACIÓN: '+(e?.message||e));return {error:String(e)}}finally{b.forEach(x=>{x.disabled=false;x.textContent='Ejecutar ahora'})}}
 document.addEventListener('click',e=>{const b=e.target.closest?.('[data-af-run-now]');if(!b)return;e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();run()},true);
-const mo=new MutationObserver(()=>renderGenerated());mo.observe(document.documentElement,{subtree:true,childList:true});
-setTimeout(renderGenerated,900);setTimeout(renderGenerated,2200);
-window.appFutbolAutomation={run,scan:deriveAlerts,getGenerated:()=>generated.slice(),state:()=>({...state})};
-window.appFutbolRunNow=run;
+new MutationObserver(()=>{render();syncComo()}).observe(document.documentElement,{subtree:true,childList:true});setTimeout(()=>{render();syncComo()},500);window.appFutbolAutomation={run,renderGenerated:render,syncComo};window.appFutbolRunNow=run;
 })();
